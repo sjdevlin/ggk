@@ -98,7 +98,9 @@
 #include <sstream>
 #include <mutex>
 #include "../include/Gobbledegook.h"
-#include "../include/udp_rec.h"
+
+// sd added
+#include "../include/standalone.h"
 #include "../include/json_parsing.h"
 
 //
@@ -118,7 +120,9 @@ static uint8_t serverDataBatteryLevel = 78;
 
 // The text string ("text/string") used by our custom text string service (see Server.cpp)
 // sd changed this from a c++ string object to a c char array
-static char * serverDataTextString[MAXLINE];
+static char *serverDataTextString[MAXLINE];
+
+
 
 //
 // Logging
@@ -138,9 +142,27 @@ LogLevel logLevel = Normal;
 // Our full set of logging methods (we just log to stdout)
 //
 // NOTE: Some methods will only log if the appropriate `logLevel` is set
-void LogDebug(const char *pText) { if (logLevel <= Debug) { std::cout << "  DEBUG: " << pText << std::endl; } }
-void LogInfo(const char *pText) { if (logLevel <= Verbose) { std::cout << "   INFO: " << pText << std::endl; } }
-void LogStatus(const char *pText) { if (logLevel <= Normal) { std::cout << " STATUS: " << pText << std::endl; } }
+void LogDebug(const char *pText)
+{
+	if (logLevel <= Debug)
+	{
+		std::cout << "  DEBUG: " << pText << std::endl;
+	}
+}
+void LogInfo(const char *pText)
+{
+	if (logLevel <= Verbose)
+	{
+		std::cout << "   INFO: " << pText << std::endl;
+	}
+}
+void LogStatus(const char *pText)
+{
+	if (logLevel <= Normal)
+	{
+		std::cout << " STATUS: " << pText << std::endl;
+	}
+}
 void LogWarn(const char *pText) { std::cout << "WARNING: " << pText << std::endl; }
 void LogError(const char *pText) { std::cout << "!!ERROR: " << pText << std::endl; }
 void LogFatal(const char *pText) { std::cout << "**FATAL: " << pText << std::endl; }
@@ -156,15 +178,15 @@ void signalHandler(int signum)
 {
 	switch (signum)
 	{
-		case SIGINT:
-			LogStatus("SIGINT recieved, shutting down");
-// sd put text in here to free up any memeory and also close file socket
-			ggkTriggerShutdown();
-			break;
-		case SIGTERM:
-			LogStatus("SIGTERM recieved, shutting down");
-			ggkTriggerShutdown();
-			break;
+	case SIGINT:
+		LogStatus("SIGINT recieved, shutting down");
+		// sd need to put code in here to free up any memeory and also close file socket
+		ggkTriggerShutdown();
+		break;
+	case SIGTERM:
+		LogStatus("SIGTERM recieved, shutting down");
+		ggkTriggerShutdown();
+		break;
 	}
 }
 
@@ -195,11 +217,11 @@ const void *dataGetter(const char *pName)
 	}
 	else if (strName == "text/string")
 	{
-		char* serverOutputString[MAXLINE];
+		char *serverOutputString[MAXLINE];
 
 		mutex_buffer.lock();
 
-		memcpy (serverOutputString, serverDataTextString, strlen(serverDataTextString)+1);
+		memcpy(serverOutputString, serverDataTextString, strlen(serverDataTextString) + 1);
 
 		mutex_buffer.unlock();
 
@@ -218,6 +240,7 @@ const void *dataGetter(const char *pName)
 // sending over stored values, so we don't need to take any additional steps to ensure thread-safety.
 int dataSetter(const char *pName, const void *pData)
 {
+
 	if (nullptr == pName)
 	{
 		LogError("NULL name sent to server data setter");
@@ -249,6 +272,150 @@ int dataSetter(const char *pName, const void *pData)
 	return 0;
 }
 
+
+//  the following three functions are called whn we have UDP data
+// I will build them into seprate files eventually
+
+void process_sound_data(meeting *  meeting_data, participant_data * participant_data_array, odas_data * odas_data_array, char * buffer)
+
+{
+    int target_angle;
+    int iChannel, iAngle;
+  
+    meeting_data->total_meeting_time++;
+    
+    for (iChannel = 0; iChannel < NUM_CHANNELS; iChannel++)
+    {
+        // check if energy at the channel is above threshold and if it has been identifies as speech
+        if (odas_data_array[iChannel].activity > MINENERGY)
+        {
+            meeting_data->total_silence = 0;
+            target_angle = 180 - (atan2(odas_data_array[iChannel].x, odas_data_array[iChannel].y) * 57.3);
+            
+            // angle_array holds a int for every angle position.  Once an angle is set to true a person is registered there
+            // so if tracked source is picked up we check to see if it is coming from a known participant
+            // if it is not yet known then we also check that we havent reached max particpants before trying to add a new one
+            
+            //max_num_participants -1 so that we dont go out of bounds - means 0 is never used so will need to optimise
+            
+            if (meeting_data->angle_array[target_angle] == 0x00 && meeting_data->num_participants < (MAXPART - 1))
+            {
+                meeting_data->num_participants++;
+                
+                meeting_data->angle_array[target_angle] = meeting_data->num_participants;
+//                printf ("new person %d\n", num_participants);
+                participant_data_array[meeting_data->num_participants].participant_angle = target_angle;
+                
+                // set intial frequency high
+                participant_data_array[meeting_data->num_participants].participant_frequency = 200.0;
+                // write a buffer around them
+                
+                for (iAngle = 1; iAngle < ANGLE_SPREAD; iAngle++)
+                {
+                    if (target_angle + iAngle < 360)
+                    {
+                        // could check if already set here - but for now will just overwrite
+                        // 360 is for going round the clock face
+                        
+                        meeting_data->angle_array[target_angle + iAngle] = meeting_data->num_participants;
+                    }
+                    else
+                    {
+                        meeting_data->angle_array[iAngle - 1] = meeting_data->num_participants;
+                    }
+                    if (target_angle - iAngle >= 0)
+                    {
+                        // could check if already set here - but for now will just overwrite
+                        // 360 is for going round the clock face
+                        meeting_data->angle_array[target_angle - iAngle] = meeting_data->num_participants;
+                    }
+                    else
+                    {
+                        meeting_data->angle_array[361 - iAngle] = meeting_data->num_participants;
+                    }
+                }
+                
+                participant_data_array[meeting_data->num_participants].participant_is_talking = 10 * odas_data_array[iChannel].activity;
+            }
+            else // its an existing talker we're hearing
+            {
+                // could put logic in here to count turns
+                participant_data_array[meeting_data->angle_array[target_angle]].participant_is_talking = 10 * odas_data_array[iChannel].activity;
+                participant_data_array[meeting_data->angle_array[target_angle]].participant_total_talk_time++;
+                
+                if (odas_data_array[iChannel].frequency > 0.0) {
+                    participant_data_array[meeting_data->angle_array[target_angle]].participant_frequency = (0.9 *  participant_data_array[meeting_data->angle_array[target_angle]].participant_frequency) + (0.1 * odas_data_array[iChannel].frequency);
+                }
+            }
+        }
+        else
+        {
+            meeting_data->total_silence++;
+        }
+    }
+}
+
+void initialise_meeting_data(meeting * meeting_data, participant_data * participant_data_array, odas_data * odas_data_array) {
+    
+    int i;
+    
+    // initialise meeting array
+    for (i=0;i<MAXPART;i++) {
+        participant_data_array[i].participant_angle = 0;
+        participant_data_array[i].participant_is_talking= 0;
+        participant_data_array[i].participant_silent_time= 0;
+        participant_data_array[i].participant_total_talk_time= 0;
+        participant_data_array[i].participant_num_turns= 0;
+        participant_data_array[i].participant_frequency= 150.0;        
+    }
+    
+    for (i=0;i<NUM_CHANNELS;i++) {
+        odas_data_array[i].x = 0.0;
+        odas_data_array[i].y = 0.0;
+        odas_data_array[i].activity = 0.0;
+        odas_data_array[i].frequency = 0.0;
+    }
+    
+    for (i=0;i<360;i++) {
+        meeting_data->angle_array[i] = 0;
+    }
+    
+    meeting_data->total_silence = 0;
+    meeting_data->total_meeting_time = 0;
+    meeting_data->num_participants = 0;
+
+}
+
+void write_to_file(char * buffer) {
+    
+    struct tm *timenow;
+    char filename[62];
+    FILE *filepointer;
+    
+    memset(&filename, 0, sizeof(filename));
+    time_t now = time(NULL);
+    timenow = gmtime(&now);
+    memset(filename, 0, sizeof(filename));
+    sprintf(filename, "MP_%d", (int)now);
+    
+    filepointer = fopen(filename, "wb");
+    
+    if (filepointer == NULL)
+    {
+        printf("Cannot open file %s\n", filename);
+        exit(EXIT_FAILURE);
+    }
+    
+    fwrite(buffer, sizeof(char), strlen(buffer), filepointer);
+    fclose(filepointer);
+
+    
+    
+}
+
+
+
+
 //
 // Entry point
 //
@@ -267,7 +434,7 @@ int main(int argc, char **ppArgv)
 		{
 			logLevel = Verbose;
 		}
-		else if  (arg == "-d")
+		else if (arg == "-d")
 		{
 			logLevel = Debug;
 		}
@@ -294,47 +461,47 @@ int main(int argc, char **ppArgv)
 	ggkLogRegisterAlways(LogAlways);
 	ggkLogRegisterTrace(LogTrace);
 
-
 	//SD
 	//Create and bind UDP socket to get data from odas server
 
-	// UDP variables
+	// first declare UDP variables
 	int in_sockfd;
 	int bytes_returned, buffer_size;
 	struct sockaddr_in in_addr;
 	int timestamp;
+	char input_buffer[MAXLINE];
 
-    	// Create socket file descriptor for server
-    	if ((in_sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0){
-        	LogFatal("Error creating socket");
+	// Create socket file descriptor for server
+	if ((in_sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
+	{
+		LogFatal("Error creating socket");
 		return -1;
-    	}
-    
-    	// Filling app information
-    	in_addr.sin_family = AF_INET; // IPv4
-    	in_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
-    	in_addr.sin_port = htons(INPORT);
-    
-    	// Bind the input socket for target with the server address
-    	if (bind(in_sockfd, (const struct sockaddr *)&in_addr,
-             sizeof(in_addr)) < 0)
-    	{
-        	LogFatal("socket binding failed");
-        	return -1;
-    	}
+	}
+	// Populate socket structure information
+	in_addr.sin_family = AF_INET; // IPv4
+	in_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+	in_addr.sin_port = htons(INPORT);
 
-    	socklen_t len;
-    	len = sizeof(in_addr); //length data is neeeded for receive call
+	// Bind the input socket for target with the server address
+	if (bind(in_sockfd, (const struct sockaddr *)&in_addr,
+			 sizeof(in_addr)) < 0)
+	{
+		LogFatal("socket binding failed");
+		return -1;
+	}
+
+	socklen_t len;
+	len = sizeof(in_addr); //length data is neeeded for receive call
 
 	// initialise all meeting data variables
 	// initialise arrays for input and output data
 
-	meeting meeting_data;  // "meeting" is a  custom type
-    	participant_data * participant_data_array = (participant_data *) malloc(MAXPART * sizeof(meeting_data));  // "participant data" is a struct
-    	odas_data * odas_data_array = (odas_data *) malloc (NUM_CHANNELS * sizeof(odas_data));  // "odas data" is a struct
-    	initialise_meeting_data(&meeting_data, participant_data_array, odas_data_array);  // set everything to zero
+	meeting meeting_data;																				   // "meeting" is a  custom type
+	participant_data *participant_data_array = (participant_data *)malloc(MAXPART * sizeof(meeting_data)); // "participant data" is a struct
+	odas_data *odas_data_array = (odas_data *)malloc(NUM_CHANNELS * sizeof(odas_data));					   // "odas data" is a struct
+	initialise_meeting_data(&meeting_data, participant_data_array, odas_data_array);					   // set everything to zero
 
-  	// need to change the main to poll gpio to test for reset
+	// need to change the main to poll gpio to test for reset
 
 	// Start the server's ascync processing
 	//
@@ -357,85 +524,95 @@ int main(int argc, char **ppArgv)
 	while (ggkGetServerRunState() < EStopping)
 	{
 
-	//this is main polling loop for getting data from odas via UDP
-	// processing it and then updating the bluetooth characteristic
+		//this is main polling loop for getting data from odas via UDP receive
+		//it processes this data and then updates the bluetooth characteristic with new data
 
- 	bytes_returned = recvfrom(in_sockfd, (char *)input_buffer, MAXLINE,
-                                MSG_WAITALL, (struct sockaddr *)&in_addr,
-                                &len);
-      	
-	if (bytes_returned > 0)
-      	{
-	      	input_buffer[bytes_returned] = 0x00; // sets end for json parser
-        	timestamp = json_parse(input_buffer, odas_data_array);
-      	}
+		bytes_returned = recvfrom(in_sockfd, (char *)input_buffer, MAXLINE,
+								  MSG_WAITALL, (struct sockaddr *)&in_addr,
+								  &len);
 
-    	process_sound_data(&meeting_data, participant_data_array, odas_data_array);
+		if (bytes_returned > 0)
+		{
+			input_buffer[bytes_returned] = 0x00; // sets end for json parser
+			timestamp = json_parse(input_buffer, odas_data_array);
+		}
 
-	// build the string for the server
-    	// load data into shared buffer space for the data getter
-	// first lock the mutex
+		process_sound_data(&meeting_data, participant_data_array, odas_data_array);
 
-	mutex_buffer.lock();
+		// build the string for the server
+		// load data into shared buffer space for the data getter
+		// first lock the mutex
 
-	// is this needed ?
-	serverDataTextString[0] = 0x00;
-    
-	sprintf(serverDataTextString, "%s{\n", serverDataTextString);
-	sprintf(serverDataTextString, "%s    \"totalMeetingTime\": %d,\n", serverDataTextString, meeting_data->total_meeting_time);
-	sprintf(serverDataTextString, "%s    \"message\": [\n", serverDataTextString);
-    
-    	int i;
-    	for (i = 1; i <= meeting_data->num_participants ; i++)
-    		{
-        	sprintf(serverDataTextString, "%s { \"memNum\": %d,", serverDataTextString, i);
-        	sprintf(serverDataTextString, "%s \"angle\": %d,", serverDataTextString, participant_data_array[i].participant_angle);
-        	sprintf(serverDataTextString, "%s \"talking\": %d,", serverDataTextString, participant_data_array[i].participant_is_talking);
-        	sprintf(serverDataTextString, "%s \"numTurns\": %d,", serverDataTextString, participant_data_array[i].participant_num_turns);
-        	sprintf(serverDataTextString, "%s \"freq\": %3.0f,", serverDataTextString, participant_data_array[i].participant_frequency);
-        	sprintf(serverDataTextString, "%s \"totalTalk\": %d}", serverDataTextString, participant_data_array[i].participant_total_talk_time);
-        
-        if (participant_data_array[i].participant_is_talking>0) {
-            // not sure this logic is necessary - prob all targets go to zero before dropping out
-            participant_data_array[i].participant_is_talking = 0x00;
-            if (participant_data_array[i].participant_silent_time > MINTURNSILENCE) {
-                participant_data_array[i].participant_num_turns++;
-                participant_data_array[i].participant_silent_time=0;}
-            } else
-	        {
-           	participant_data_array[i].participant_silent_time++;
-            };
-        
-        if (i != (meeting_data->num_participants))
-        {
-            	sprintf(serverDataTextString, "%s,", serverDataTextString);
-        }
-        	sprintf(serverDataTextString, "%s\n", serverDataTextString);
-    	}
-    
-    	sprintf(serverDataTextString, "%s    ]\n", serverDataTextString);
-    	sprintf(serverDataTextString, "%s}\n", serverDataTextString);
-
-	mutex_buffer.unlock();
-//    printf ("%s\n",serverDataTextString);    
-
-
-      
-    if (meeting_data.total_silence > MAXSILENCE)
-      {
-          // reset all the meeting stuff and write to file
-          if (meeting_data.num_participants > 0)
-          {
 		mutex_buffer.lock();
-              	write_to_file (serverDataTextString);
-		mutex_buffer.unlock();
-              initialise_meeting_data(&meeting_data, participant_data_array, odas_data_array);
-          }
-      }		
-		std::this_thread::sleep_for(std::chrono::seconds(2));
 
-		serverDataBatteryLevel = std::max(serverDataBatteryLevel - 1, 0);
-		ggkNofifyUpdatedCharacteristic("/com/gobbledegook/battery/level");
+		// is this needed ?
+		serverDataTextString[0] = 0x00;
+
+		sprintf(serverDataTextString, "%s{\n", serverDataTextString);
+		sprintf(serverDataTextString, "%s    \"totalMeetingTime\": %d,\n", serverDataTextString, meeting_data->total_meeting_time);
+		sprintf(serverDataTextString, "%s    \"message\": [\n", serverDataTextString);
+
+		int i;
+		for (i = 1; i <= meeting_data->num_participants; i++)
+		{
+			sprintf(serverDataTextString, "%s { \"memNum\": %d,", serverDataTextString, i);
+			sprintf(serverDataTextString, "%s \"angle\": %d,", serverDataTextString, participant_data_array[i].participant_angle);
+			sprintf(serverDataTextString, "%s \"talking\": %d,", serverDataTextString, participant_data_array[i].participant_is_talking);
+			sprintf(serverDataTextString, "%s \"numTurns\": %d,", serverDataTextString, participant_data_array[i].participant_num_turns);
+			sprintf(serverDataTextString, "%s \"freq\": %3.0f,", serverDataTextString, participant_data_array[i].participant_frequency);
+			sprintf(serverDataTextString, "%s \"totalTalk\": %d}", serverDataTextString, participant_data_array[i].participant_total_talk_time);
+
+			if (participant_data_array[i].participant_is_talking > 0)
+			{
+				// not sure this logic is necessary - prob all targets go to zero before dropping out
+				participant_data_array[i].participant_is_talking = 0x00;
+				if (participant_data_array[i].participant_silent_time > MINTURNSILENCE)
+				{
+					participant_data_array[i].participant_num_turns++;
+					participant_data_array[i].participant_silent_time = 0;
+				}
+			}
+			else
+			{
+				participant_data_array[i].participant_silent_time++;
+			};
+
+			if (i != (meeting_data->num_participants))
+			{
+				sprintf(serverDataTextString, "%s,", serverDataTextString);
+			}
+			sprintf(serverDataTextString, "%s\n", serverDataTextString);
+		}
+
+		sprintf(serverDataTextString, "%s    ]\n", serverDataTextString);
+		sprintf(serverDataTextString, "%s}\n", serverDataTextString);
+
+		mutex_buffer.unlock();
+		//    printf ("%s\n",serverDataTextString);
+
+		// now the output string is ready and we should call notify
+		ggkNofifyUpdatedCharacteristic("/com/gobbledegook/text/string");
+
+		if (meeting_data.total_silence > MAXSILENCE)
+		{
+			// reset all the meeting stuff and write to file
+			if (meeting_data.num_participants > 0)
+			{
+				mutex_buffer.lock();
+				write_to_file(serverDataTextString);
+				mutex_buffer.unlock();
+
+				// reset data for next meeting
+				initialise_meeting_data(&meeting_data, participant_data_array, odas_data_array);
+			}
+		}
+//		std::this_thread::sleep_for(std::chrono::seconds(2));
+
+//		sd need to change the battery level to be real - from PiJuice
+//		serverDataBatteryLevel = std::max(serverDataBatteryLevel - 1, 0);
+//		ggkNofifyUpdatedCharacteristic("/com/gobbledegook/battery/level");
+
+
 	}
 
 	// Wait for the server to come to a complete stop (CTRL-C from the command line)
@@ -445,5 +622,5 @@ int main(int argc, char **ppArgv)
 	}
 
 	// Return the final server health status as a success (0) or error (-1)
-  	return ggkGetServerHealth() == EOk ? 0 : 1;
+	return ggkGetServerHealth() == EOk ? 0 : 1;
 }

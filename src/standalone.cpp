@@ -120,9 +120,7 @@ static uint8_t serverDataBatteryLevel = 78;
 
 // The text string ("text/string") used by our custom text string service (see Server.cpp)
 // sd changed this from a c++ string object to a c char array
-static char serverDataTextString[MAXLINE];
-
-
+static std::string serverDataTextString;
 
 //
 // Logging
@@ -217,15 +215,15 @@ const void *dataGetter(const char *pName)
 	}
 	else if (strName == "text/string")
 	{
-		char serverOutputString[MAXLINE];
+		std::string serverOutputString;
 
 		mutex_buffer.lock();
 
-		memcpy(serverOutputString, serverDataTextString, strlen(serverDataTextString) + 1);
+		serverOutputString = serverDataTextString;
 
 		mutex_buffer.unlock();
 
-		return serverOutputString;
+		return serverOutputString.c_str;
 	}
 
 	LogWarn((std::string("Unknown name for server data getter request: '") + pName + "'").c_str());
@@ -262,8 +260,8 @@ int dataSetter(const char *pName, const void *pData)
 	}
 	else if (strName == "text/string")
 	{
-//		need to change this below as will no lnger work
-//		serverDataTextString = static_cast<const char *>(pData);
+		//		need to change this below as will no lnger work
+		//		serverDataTextString = static_cast<const char *>(pData);
 		LogDebug((std::string("Server data: text string set to '") + serverDataTextString + "'").c_str());
 		return 1;
 	}
@@ -273,149 +271,147 @@ int dataSetter(const char *pName, const void *pData)
 	return 0;
 }
 
-
 //  the following three functions are called whn we have UDP data
 // I will build them into seprate files eventually
 
-void process_sound_data(meeting *  meeting_data, participant_data * participant_data_array, odas_data * odas_data_array)
+void process_sound_data(meeting *meeting_data, participant_data *participant_data_array, odas_data *odas_data_array)
 
 {
-    int target_angle;
-    int iChannel, iAngle;
-  
-    meeting_data->total_meeting_time++;
-    
-    for (iChannel = 0; iChannel < NUM_CHANNELS; iChannel++)
-    {
-        // check if energy at the channel is above threshold and if it has been identifies as speech
-        if (odas_data_array[iChannel].activity > MINENERGY)
-        {
-            meeting_data->total_silence = 0;
-            target_angle = 180 - (atan2(odas_data_array[iChannel].x, odas_data_array[iChannel].y) * 57.3);
-            
-            // angle_array holds a int for every angle position.  Once an angle is set to true a person is registered there
-            // so if tracked source is picked up we check to see if it is coming from a known participant
-            // if it is not yet known then we also check that we havent reached max particpants before trying to add a new one
-            
-            //max_num_participants -1 so that we dont go out of bounds - means 0 is never used so will need to optimise
-            
-            if (meeting_data->angle_array[target_angle] == 0x00 && meeting_data->num_participants < (MAXPART - 1))
-            {
-                meeting_data->num_participants++;
-                
-                meeting_data->angle_array[target_angle] = meeting_data->num_participants;
-//                printf ("new person %d\n", num_participants);
-                participant_data_array[meeting_data->num_participants].participant_angle = target_angle;
-                
-                // set intial frequency high
-                participant_data_array[meeting_data->num_participants].participant_frequency = 200.0;
-                // write a buffer around them
-                
-                for (iAngle = 1; iAngle < ANGLE_SPREAD; iAngle++)
-                {
-                    if (target_angle + iAngle < 360)
-                    {
-                        // could check if already set here - but for now will just overwrite
-                        // 360 is for going round the clock face
-                        
-                        meeting_data->angle_array[target_angle + iAngle] = meeting_data->num_participants;
-                    }
-                    else
-                    {
-                        meeting_data->angle_array[iAngle - 1] = meeting_data->num_participants;
-                    }
-                    if (target_angle - iAngle >= 0)
-                    {
-                        // could check if already set here - but for now will just overwrite
-                        // 360 is for going round the clock face
-                        meeting_data->angle_array[target_angle - iAngle] = meeting_data->num_participants;
-                    }
-                    else
-                    {
-                        meeting_data->angle_array[361 - iAngle] = meeting_data->num_participants;
-                    }
-                }
-                
-                participant_data_array[meeting_data->num_participants].participant_is_talking = 10 * odas_data_array[iChannel].activity;
-            }
-            else // its an existing talker we're hearing
-            {
-                // could put logic in here to count turns
-                participant_data_array[meeting_data->angle_array[target_angle]].participant_is_talking = 10 * odas_data_array[iChannel].activity;
-                participant_data_array[meeting_data->angle_array[target_angle]].participant_total_talk_time++;
-                
-                if (odas_data_array[iChannel].frequency > 0.0) {
-                    participant_data_array[meeting_data->angle_array[target_angle]].participant_frequency = (0.9 *  participant_data_array[meeting_data->angle_array[target_angle]].participant_frequency) + (0.1 * odas_data_array[iChannel].frequency);
-                }
-            }
-        }
-        else
-        {
-            meeting_data->total_silence++;
-        }
-    }
+	int target_angle;
+	int iChannel, iAngle;
+
+	meeting_data->total_meeting_time++;
+
+	for (iChannel = 0; iChannel < NUM_CHANNELS; iChannel++)
+	{
+		// check if energy at the channel is above threshold and if it has been identifies as speech
+		if (odas_data_array[iChannel].activity > MINENERGY)
+		{
+			meeting_data->total_silence = 0;
+			target_angle = 180 - (atan2(odas_data_array[iChannel].x, odas_data_array[iChannel].y) * 57.3);
+
+			// angle_array holds a int for every angle position.  Once an angle is set to true a person is registered there
+			// so if tracked source is picked up we check to see if it is coming from a known participant
+			// if it is not yet known then we also check that we havent reached max particpants before trying to add a new one
+
+			//max_num_participants -1 so that we dont go out of bounds - means 0 is never used so will need to optimise
+
+			if (meeting_data->angle_array[target_angle] == 0x00 && meeting_data->num_participants < (MAXPART - 1))
+			{
+				meeting_data->num_participants++;
+
+				meeting_data->angle_array[target_angle] = meeting_data->num_participants;
+				//                printf ("new person %d\n", num_participants);
+				participant_data_array[meeting_data->num_participants].participant_angle = target_angle;
+
+				// set intial frequency high
+				participant_data_array[meeting_data->num_participants].participant_frequency = 200.0;
+				// write a buffer around them
+
+				for (iAngle = 1; iAngle < ANGLE_SPREAD; iAngle++)
+				{
+					if (target_angle + iAngle < 360)
+					{
+						// could check if already set here - but for now will just overwrite
+						// 360 is for going round the clock face
+
+						meeting_data->angle_array[target_angle + iAngle] = meeting_data->num_participants;
+					}
+					else
+					{
+						meeting_data->angle_array[iAngle - 1] = meeting_data->num_participants;
+					}
+					if (target_angle - iAngle >= 0)
+					{
+						// could check if already set here - but for now will just overwrite
+						// 360 is for going round the clock face
+						meeting_data->angle_array[target_angle - iAngle] = meeting_data->num_participants;
+					}
+					else
+					{
+						meeting_data->angle_array[361 - iAngle] = meeting_data->num_participants;
+					}
+				}
+
+				participant_data_array[meeting_data->num_participants].participant_is_talking = iChannel;
+			}
+			else // its an existing talker we're hearing
+			{
+				// could put logic in here to count turns
+				participant_data_array[meeting_data->angle_array[target_angle]].participant_is_talking = 10 * odas_data_array[iChannel].activity;
+				participant_data_array[meeting_data->angle_array[target_angle]].participant_total_talk_time++;
+
+				if (odas_data_array[iChannel].frequency > 0.0)
+				{
+					participant_data_array[meeting_data->angle_array[target_angle]].participant_frequency = (0.9 * participant_data_array[meeting_data->angle_array[target_angle]].participant_frequency) + (0.1 * odas_data_array[iChannel].frequency);
+				}
+			}
+		}
+		else
+		{
+			meeting_data->total_silence++;
+		}
+	}
 }
 
-void initialise_meeting_data(meeting * meeting_data, participant_data * participant_data_array, odas_data * odas_data_array) {
-    
-    int i;
-    
-    // initialise meeting array
-    for (i=0;i<MAXPART;i++) {
-        participant_data_array[i].participant_angle = 0;
-        participant_data_array[i].participant_is_talking= 0;
-        participant_data_array[i].participant_silent_time= 0;
-        participant_data_array[i].participant_total_talk_time= 0;
-        participant_data_array[i].participant_num_turns= 0;
-        participant_data_array[i].participant_frequency= 150.0;        
-    }
-    
-    for (i=0;i<NUM_CHANNELS;i++) {
-        odas_data_array[i].x = 0.0;
-        odas_data_array[i].y = 0.0;
-        odas_data_array[i].activity = 0.0;
-        odas_data_array[i].frequency = 0.0;
-    }
-    
-    for (i=0;i<360;i++) {
-        meeting_data->angle_array[i] = 0;
-    }
-    
-    meeting_data->total_silence = 0;
-    meeting_data->total_meeting_time = 0;
-    meeting_data->num_participants = 0;
+void initialise_meeting_data(meeting *meeting_data, participant_data *participant_data_array, odas_data *odas_data_array)
+{
 
+	int i;
+
+	// initialise meeting array
+	for (i = 0; i < MAXPART; i++)
+	{
+		participant_data_array[i].participant_angle = 0;
+		participant_data_array[i].participant_is_talking = 0;
+		participant_data_array[i].participant_silent_time = 0;
+		participant_data_array[i].participant_total_talk_time = 0;
+		participant_data_array[i].participant_num_turns = 0;
+		participant_data_array[i].participant_frequency = 150.0;
+	}
+
+	for (i = 0; i < NUM_CHANNELS; i++)
+	{
+		odas_data_array[i].x = 0.0;
+		odas_data_array[i].y = 0.0;
+		odas_data_array[i].activity = 0.0;
+		odas_data_array[i].frequency = 0.0;
+	}
+
+	for (i = 0; i < 360; i++)
+	{
+		meeting_data->angle_array[i] = 0;
+	}
+
+	meeting_data->total_silence = 0;
+	meeting_data->total_meeting_time = 0;
+	meeting_data->num_participants = 0;
 }
 
-void write_to_file(char * buffer) {
-    
-    struct tm *timenow;
-    char filename[62];
-    FILE *filepointer;
-    
-    memset(&filename, 0, sizeof(filename));
-    time_t now = time(NULL);
-    timenow = gmtime(&now);
-    memset(filename, 0, sizeof(filename));
-    sprintf(filename, "MP_%d", (int)now);
-    
-    filepointer = fopen(filename, "wb");
-    
-    if (filepointer == NULL)
-    {
-        printf("Cannot open file %s\n", filename);
-        exit(EXIT_FAILURE);
-    }
-    
-    fwrite(buffer, sizeof(char), strlen(buffer), filepointer);
-    fclose(filepointer);
+void write_to_file(std::string buffer)
+{
 
-    
-    
+	struct tm *timenow;
+	char filename[62];
+	FILE *filepointer;
+
+	memset(&filename, 0, sizeof(filename));
+	time_t now = time(NULL);
+	timenow = gmtime(&now);
+	memset(filename, 0, sizeof(filename));
+	sprintf(filename, "MP_%d", (int)now);
+
+	filepointer = fopen(filename, "wb");
+
+	if (filepointer == NULL)
+	{
+		printf("Cannot open file %s\n", filename);
+		exit(EXIT_FAILURE);
+	}
+
+	fwrite(buffer, 1, buffer.size, filepointer);
+	fclose(filepointer);
 }
-
-
-
 
 //
 // Entry point
@@ -423,6 +419,7 @@ void write_to_file(char * buffer) {
 
 int main(int argc, char **ppArgv)
 {
+
 	// A basic command-line parser
 	for (int i = 1; i < argc; ++i)
 	{
@@ -461,6 +458,9 @@ int main(int argc, char **ppArgv)
 	ggkLogRegisterFatal(LogFatal);
 	ggkLogRegisterAlways(LogAlways);
 	ggkLogRegisterTrace(LogTrace);
+
+	//SD reserve space for json string to improve performance
+	serverDataTextString.reserve(MAXLINE);
 
 	//SD
 	//Create and bind UDP socket to get data from odas server
@@ -547,21 +547,26 @@ int main(int argc, char **ppArgv)
 		mutex_buffer.lock();
 
 		// is this needed ?
-		serverDataTextString[0] = 0x00;
-
-		sprintf(serverDataTextString, "%s{\n", serverDataTextString);
-		sprintf(serverDataTextString, "%s    \"totalMeetingTime\": %d,\n", serverDataTextString, meeting_data.total_meeting_time);
-		sprintf(serverDataTextString, "%s    \"message\": [\n", serverDataTextString);
+		serverDataTextString = "{\"totalMeetingTime\": ");
+		serverDataTextString += std::to_string(meeting_data.total_meeting_time);
+		serverDataTextString += ",\n\"message\": [\n";
 
 		int i;
 		for (i = 1; i <= meeting_data.num_participants; i++)
 		{
-			sprintf(serverDataTextString, "%s { \"memNum\": %d,", serverDataTextString, i);
-			sprintf(serverDataTextString, "%s \"angle\": %d,", serverDataTextString, participant_data_array[i].participant_angle);
-			sprintf(serverDataTextString, "%s \"talking\": %d,", serverDataTextString, participant_data_array[i].participant_is_talking);
-			sprintf(serverDataTextString, "%s \"numTurns\": %d,", serverDataTextString, participant_data_array[i].participant_num_turns);
-			sprintf(serverDataTextString, "%s \"freq\": %3.0f,", serverDataTextString, participant_data_array[i].participant_frequency);
-			sprintf(serverDataTextString, "%s \"totalTalk\": %d}", serverDataTextString, participant_data_array[i].participant_total_talk_time);
+			serverDataTextString += "{\"memNum\": ";
+			serverDataTextString += std::to_string(i);
+			serverDataTextString += ",\n\"angle\": ";
+			serverDataTextString += std::to_string(participant_data_array[i].participant_angle);
+			serverDataTextString += ",\n\"talking\": ";
+			serverDataTextString += std::to_string(participant_data_array[i].participant_is_talking);
+			serverDataTextString += ",\n\"numTurns\": ";
+			serverDataTextString += std::to_string(participant_data_array[i].participant_num_turns);
+			serverDataTextString += ",\n\"freq\": ";
+			serverDataTextString += std::to_string(participant_data_array[i].participant_frequency);
+			serverDataTextString += ",\n\"totalTalk\": ";
+			serverDataTextString += std::to_string(participant_data_array[i].participant_total_talk_time);
+			serverDataTextString += "}"
 
 			if (participant_data_array[i].participant_is_talking > 0)
 			{
@@ -580,13 +585,11 @@ int main(int argc, char **ppArgv)
 
 			if (i != (meeting_data.num_participants))
 			{
-				sprintf(serverDataTextString, "%s,", serverDataTextString);
+				serverDataTextString += ",";
 			}
-			sprintf(serverDataTextString, "%s\n", serverDataTextString);
 		}
 
-		sprintf(serverDataTextString, "%s    ]\n", serverDataTextString);
-		sprintf(serverDataTextString, "%s}\n", serverDataTextString);
+			serverDataTextString += "]}\n";
 
 		mutex_buffer.unlock();
 		//    printf ("%s\n",serverDataTextString);
@@ -607,13 +610,11 @@ int main(int argc, char **ppArgv)
 				initialise_meeting_data(&meeting_data, participant_data_array, odas_data_array);
 			}
 		}
-//		std::this_thread::sleep_for(std::chrono::seconds(2));
+		//		std::this_thread::sleep_for(std::chrono::seconds(2));
 
-//		sd need to change the battery level to be real - from PiJuice
-//		serverDataBatteryLevel = std::max(serverDataBatteryLevel - 1, 0);
-//		ggkNofifyUpdatedCharacteristic("/com/gobbledegook/battery/level");
-
-
+		//		sd need to change the battery level to be real - from PiJuice
+		//		serverDataBatteryLevel = std::max(serverDataBatteryLevel - 1, 0);
+		//		ggkNofifyUpdatedCharacteristic("/com/gobbledegook/battery/level");
 	}
 
 	// Wait for the server to come to a complete stop (CTRL-C from the command line)

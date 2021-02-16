@@ -120,7 +120,7 @@ static uint8_t serverDataBatteryLevel = 78;
 
 // The text string ("text/string") used by our custom text string service (see Server.cpp)
 // sd changed this from a c++ string object to a c char array
-static char *serverDataTextString[MAXLINE];
+static char serverDataTextString[MAXLINE];
 
 
 
@@ -217,7 +217,7 @@ const void *dataGetter(const char *pName)
 	}
 	else if (strName == "text/string")
 	{
-		char *serverOutputString[MAXLINE];
+		char serverOutputString[MAXLINE];
 
 		mutex_buffer.lock();
 
@@ -262,7 +262,8 @@ int dataSetter(const char *pName, const void *pData)
 	}
 	else if (strName == "text/string")
 	{
-		serverDataTextString = static_cast<const char *>(pData);
+//		need to change this below as will no lnger work
+//		serverDataTextString = static_cast<const char *>(pData);
 		LogDebug((std::string("Server data: text string set to '") + serverDataTextString + "'").c_str());
 		return 1;
 	}
@@ -276,7 +277,7 @@ int dataSetter(const char *pName, const void *pData)
 //  the following three functions are called whn we have UDP data
 // I will build them into seprate files eventually
 
-void process_sound_data(meeting *  meeting_data, participant_data * participant_data_array, odas_data * odas_data_array, char * buffer)
+void process_sound_data(meeting *  meeting_data, participant_data * participant_data_array, odas_data * odas_data_array)
 
 {
     int target_angle;
@@ -466,7 +467,7 @@ int main(int argc, char **ppArgv)
 
 	// first declare UDP variables
 	int in_sockfd;
-	int bytes_returned, buffer_size;
+	int bytes_returned;
 	struct sockaddr_in in_addr;
 	int timestamp;
 	char input_buffer[MAXLINE];
@@ -549,11 +550,11 @@ int main(int argc, char **ppArgv)
 		serverDataTextString[0] = 0x00;
 
 		sprintf(serverDataTextString, "%s{\n", serverDataTextString);
-		sprintf(serverDataTextString, "%s    \"totalMeetingTime\": %d,\n", serverDataTextString, meeting_data->total_meeting_time);
+		sprintf(serverDataTextString, "%s    \"totalMeetingTime\": %d,\n", serverDataTextString, meeting_data.total_meeting_time);
 		sprintf(serverDataTextString, "%s    \"message\": [\n", serverDataTextString);
 
 		int i;
-		for (i = 1; i <= meeting_data->num_participants; i++)
+		for (i = 1; i <= meeting_data.num_participants; i++)
 		{
 			sprintf(serverDataTextString, "%s { \"memNum\": %d,", serverDataTextString, i);
 			sprintf(serverDataTextString, "%s \"angle\": %d,", serverDataTextString, participant_data_array[i].participant_angle);
@@ -577,7 +578,7 @@ int main(int argc, char **ppArgv)
 				participant_data_array[i].participant_silent_time++;
 			};
 
-			if (i != (meeting_data->num_participants))
+			if (i != (meeting_data.num_participants))
 			{
 				sprintf(serverDataTextString, "%s,", serverDataTextString);
 			}

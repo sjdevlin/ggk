@@ -96,8 +96,10 @@
 #include <iostream>
 #include <thread>
 #include <sstream>
-
+#include <mutex>
 #include "../include/Gobbledegook.h"
+#include "../include/udp_rec.h"
+#include "../include/json_parsing.h"
 
 //
 // Constants
@@ -106,15 +108,17 @@
 // Maximum time to wait for any single async process to timeout during initialization
 static const int kMaxAsyncInitTimeoutMS = 30 * 1000;
 
-//
+//sd added mutex so that we can multi-thread
+std::mutex mutex_buffer;
+
 // Server data values
 //
-
 // The battery level ("battery/level") reported by the server (see Server.cpp)
 static uint8_t serverDataBatteryLevel = 78;
 
 // The text string ("text/string") used by our custom text string service (see Server.cpp)
-static std::string serverDataTextString = "Hello, world!";
+// sd changed this from a c++ string object to a c char array
+static char * serverDataTextString[MAXLINE];
 
 //
 // Logging
@@ -154,6 +158,7 @@ void signalHandler(int signum)
 	{
 		case SIGINT:
 			LogStatus("SIGINT recieved, shutting down");
+// sd put text in here to free up any memeory and also close file socket
 			ggkTriggerShutdown();
 			break;
 		case SIGTERM:
@@ -175,6 +180,7 @@ void signalHandler(int signum)
 // sending over stored values, so we don't need to take any additional steps to ensure thread-safety.
 const void *dataGetter(const char *pName)
 {
+
 	if (nullptr == pName)
 	{
 		LogError("NULL name sent to server data getter");
@@ -189,7 +195,15 @@ const void *dataGetter(const char *pName)
 	}
 	else if (strName == "text/string")
 	{
-		return serverDataTextString.c_str();
+		char* serverOutputString[MAXLINE];
+
+		mutex_buffer.lock();
+
+		memcpy (serverOutputString, serverDataTextString, strlen(serverDataTextString)+1);
+
+		mutex_buffer.unlock();
+
+		return serverOutputString;
 	}
 
 	LogWarn((std::string("Unknown name for server data getter request: '") + pName + "'").c_str());
@@ -280,6 +294,48 @@ int main(int argc, char **ppArgv)
 	ggkLogRegisterAlways(LogAlways);
 	ggkLogRegisterTrace(LogTrace);
 
+
+	//SD
+	//Create and bind UDP socket to get data from odas server
+
+	// UDP variables
+	int in_sockfd;
+	int bytes_returned, buffer_size;
+	struct sockaddr_in in_addr;
+	int timestamp;
+
+    	// Create socket file descriptor for server
+    	if ((in_sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0){
+        	LogFatal("Error creating socket");
+		return -1;
+    	}
+    
+    	// Filling app information
+    	in_addr.sin_family = AF_INET; // IPv4
+    	in_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+    	in_addr.sin_port = htons(INPORT);
+    
+    	// Bind the input socket for target with the server address
+    	if (bind(in_sockfd, (const struct sockaddr *)&in_addr,
+             sizeof(in_addr)) < 0)
+    	{
+        	LogFatal("socket binding failed");
+        	return -1;
+    	}
+
+    	socklen_t len;
+    	len = sizeof(in_addr); //length data is neeeded for receive call
+
+	// initialise all meeting data variables
+	// initialise arrays for input and output data
+
+	meeting meeting_data;  // "meeting" is a  custom type
+    	participant_data * participant_data_array = (participant_data *) malloc(MAXPART * sizeof(meeting_data));  // "participant data" is a struct
+    	odas_data * odas_data_array = (odas_data *) malloc (NUM_CHANNELS * sizeof(odas_data));  // "odas data" is a struct
+    	initialise_meeting_data(&meeting_data, participant_data_array, odas_data_array);  // set everything to zero
+
+  	// need to change the main to poll gpio to test for reset
+
 	// Start the server's ascync processing
 	//
 	// This starts the server on a thread and begins the initialization process
@@ -289,6 +345,7 @@ int main(int argc, char **ppArgv)
 	//     This first parameter (the service name) must match tha name configured in the D-Bus permissions. See the Readme.md file
 	//     for more information.
 	//
+
 	if (!ggkStart("gobbledegook", "Gobbledegook", "Gobbledegook", dataGetter, dataSetter, kMaxAsyncInitTimeoutMS))
 	{
 		return -1;
@@ -299,7 +356,83 @@ int main(int argc, char **ppArgv)
 	// While we wait, every 15 ticks, drop the battery level by one percent until we reach 0
 	while (ggkGetServerRunState() < EStopping)
 	{
-		std::this_thread::sleep_for(std::chrono::seconds(15));
+
+	//this is main polling loop for getting data from odas via UDP
+	// processing it and then updating the bluetooth characteristic
+
+ 	bytes_returned = recvfrom(in_sockfd, (char *)input_buffer, MAXLINE,
+                                MSG_WAITALL, (struct sockaddr *)&in_addr,
+                                &len);
+      	
+	if (bytes_returned > 0)
+      	{
+	      	input_buffer[bytes_returned] = 0x00; // sets end for json parser
+        	timestamp = json_parse(input_buffer, odas_data_array);
+      	}
+
+    	process_sound_data(&meeting_data, participant_data_array, odas_data_array);
+
+	// build the string for the server
+    	// load data into shared buffer space for the data getter
+	// first lock the mutex
+
+	mutex_buffer.lock();
+
+	// is this needed ?
+	serverDataTextString[0] = 0x00;
+    
+	sprintf(serverDataTextString, "%s{\n", serverDataTextString);
+	sprintf(serverDataTextString, "%s    \"totalMeetingTime\": %d,\n", serverDataTextString, meeting_data->total_meeting_time);
+	sprintf(serverDataTextString, "%s    \"message\": [\n", serverDataTextString);
+    
+    	int i;
+    	for (i = 1; i <= meeting_data->num_participants ; i++)
+    		{
+        	sprintf(serverDataTextString, "%s { \"memNum\": %d,", serverDataTextString, i);
+        	sprintf(serverDataTextString, "%s \"angle\": %d,", serverDataTextString, participant_data_array[i].participant_angle);
+        	sprintf(serverDataTextString, "%s \"talking\": %d,", serverDataTextString, participant_data_array[i].participant_is_talking);
+        	sprintf(serverDataTextString, "%s \"numTurns\": %d,", serverDataTextString, participant_data_array[i].participant_num_turns);
+        	sprintf(serverDataTextString, "%s \"freq\": %3.0f,", serverDataTextString, participant_data_array[i].participant_frequency);
+        	sprintf(serverDataTextString, "%s \"totalTalk\": %d}", serverDataTextString, participant_data_array[i].participant_total_talk_time);
+        
+        if (participant_data_array[i].participant_is_talking>0) {
+            // not sure this logic is necessary - prob all targets go to zero before dropping out
+            participant_data_array[i].participant_is_talking = 0x00;
+            if (participant_data_array[i].participant_silent_time > MINTURNSILENCE) {
+                participant_data_array[i].participant_num_turns++;
+                participant_data_array[i].participant_silent_time=0;}
+            } else
+	        {
+           	participant_data_array[i].participant_silent_time++;
+            };
+        
+        if (i != (meeting_data->num_participants))
+        {
+            	sprintf(serverDataTextString, "%s,", serverDataTextString);
+        }
+        	sprintf(serverDataTextString, "%s\n", serverDataTextString);
+    	}
+    
+    	sprintf(serverDataTextString, "%s    ]\n", serverDataTextString);
+    	sprintf(serverDataTextString, "%s}\n", serverDataTextString);
+
+	mutex_buffer.unlock();
+//    printf ("%s\n",serverDataTextString);    
+
+
+      
+    if (meeting_data.total_silence > MAXSILENCE)
+      {
+          // reset all the meeting stuff and write to file
+          if (meeting_data.num_participants > 0)
+          {
+		mutex_buffer.lock();
+              	write_to_file (serverDataTextString);
+		mutex_buffer.unlock();
+              initialise_meeting_data(&meeting_data, participant_data_array, odas_data_array);
+          }
+      }		
+		std::this_thread::sleep_for(std::chrono::seconds(2));
 
 		serverDataBatteryLevel = std::max(serverDataBatteryLevel - 1, 0);
 		ggkNofifyUpdatedCharacteristic("/com/gobbledegook/battery/level");

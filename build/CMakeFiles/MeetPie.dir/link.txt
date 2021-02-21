@@ -1,0 +1,1 @@
+/usr/bin/c++   -std=c++11 -pthread -g  -rdynamic CMakeFiles/MeetPie.dir/src/MeetPie.o CMakeFiles/MeetPie.dir/src/json_parsing.o  -o ../bin/MeetPie -lc -lglib-2.0 -lgio-2.0 -lgobject-2.0 -ljson-c -lm ../src/libggk.a 

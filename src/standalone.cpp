@@ -98,6 +98,7 @@
 #include <sstream>
 #include <mutex>
 #include "../include/Gobbledegook.h"
+#include <fstream>
 
 // sd added
 #include "../include/standalone.h"
@@ -223,7 +224,7 @@ const void *dataGetter(const char *pName)
 
 		mutex_buffer.unlock();
 
-		return serverOutputString.c_str;
+		return serverOutputString.c_str();
 	}
 
 	LogWarn((std::string("Unknown name for server data getter request: '") + pName + "'").c_str());
@@ -392,25 +393,17 @@ void write_to_file(std::string buffer)
 {
 
 	struct tm *timenow;
-	char filename[62];
-	FILE *filepointer;
+	std::string filename = "MP_";
 
-	memset(&filename, 0, sizeof(filename));
 	time_t now = time(NULL);
 	timenow = gmtime(&now);
-	memset(filename, 0, sizeof(filename));
-	sprintf(filename, "MP_%d", (int)now);
+	filename += std::to_string(now);
 
-	filepointer = fopen(filename, "wb");
+	std::ofstream file(filename);
+//	std::cin >> buffer;
+	file << buffer;
+	file.close();
 
-	if (filepointer == NULL)
-	{
-		printf("Cannot open file %s\n", filename);
-		exit(EXIT_FAILURE);
-	}
-
-	fwrite(buffer, 1, buffer.size, filepointer);
-	fclose(filepointer);
 }
 
 //
@@ -469,7 +462,6 @@ int main(int argc, char **ppArgv)
 	int in_sockfd;
 	int bytes_returned;
 	struct sockaddr_in in_addr;
-	int timestamp;
 	char input_buffer[MAXLINE];
 
 	// Create socket file descriptor for server
@@ -535,7 +527,7 @@ int main(int argc, char **ppArgv)
 		if (bytes_returned > 0)
 		{
 			input_buffer[bytes_returned] = 0x00; // sets end for json parser
-			timestamp = json_parse(input_buffer, odas_data_array);
+			json_parse(input_buffer, odas_data_array);
 		}
 
 		process_sound_data(&meeting_data, participant_data_array, odas_data_array);
@@ -547,7 +539,7 @@ int main(int argc, char **ppArgv)
 		mutex_buffer.lock();
 
 		// is this needed ?
-		serverDataTextString = "{\"totalMeetingTime\": ");
+		serverDataTextString = "{\"totalMeetingTime\": ";
 		serverDataTextString += std::to_string(meeting_data.total_meeting_time);
 		serverDataTextString += ",\n\"message\": [\n";
 
@@ -566,7 +558,7 @@ int main(int argc, char **ppArgv)
 			serverDataTextString += std::to_string(participant_data_array[i].participant_frequency);
 			serverDataTextString += ",\n\"totalTalk\": ";
 			serverDataTextString += std::to_string(participant_data_array[i].participant_total_talk_time);
-			serverDataTextString += "}"
+			serverDataTextString += "}";
 
 			if (participant_data_array[i].participant_is_talking > 0)
 			{

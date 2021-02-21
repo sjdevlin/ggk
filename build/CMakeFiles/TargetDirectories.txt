@@ -1,0 +1,7 @@
+/home/pi/ggk/build/CMakeFiles/install/strip.dir
+/home/pi/ggk/build/CMakeFiles/edit_cache.dir
+/home/pi/ggk/build/CMakeFiles/rebuild_cache.dir
+/home/pi/ggk/build/CMakeFiles/list_install_components.dir
+/home/pi/ggk/build/CMakeFiles/MeetPie.dir
+/home/pi/ggk/build/CMakeFiles/install.dir
+/home/pi/ggk/build/CMakeFiles/install/local.dir
